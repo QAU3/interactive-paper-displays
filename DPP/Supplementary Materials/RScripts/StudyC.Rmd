@@ -1,0 +1,240 @@
+---
+title: "StudyC"
+output: html_notebook
+---
+
+# Importing libs 
+```{r}
+library(dplyr)
+library(fitdistrplus)
+library(rstatix)
+library(readxl)
+library(lme4)
+library(multcomp)
+library(lsmeans)
+library(car)
+library(flexplot)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(ggprism)
+library(reshape2)
+library(glmmTMB)
+library("mgcv")
+```
+
+# Minimum reading velocity
+
+## Importing file 
+```{r}
+speedFile <- read_excel("./data/StudyC_Data.xlsx", sheet = "SUMMARY")
+```
+
+## Formatting data
+
+```{r}
+USERS<- speedFile["USER"]
+TT<- speedFile["TASK_TYPE"]
+AT<- speedFile["animatio_type"]
+min_conf<- speedFile["min_conf"]
+angular_speed=speedFile["angular_speed"]
+linear_speed=speedFile["linear_speed"]
+radious_unity=speedFile["radious_unity"]
+radious_pixels=speedFile["radious_pixels"]
+
+
+data= data.frame(USERS,TT,AT, min_conf, angular_speed, linear_speed, radious_unity, radious_pixels)
+data$USER=as.factor(data$USER)
+
+#Filter out numbers
+speedPrefs=data%>%
+  filter(TASK_TYPE=="rotation_pref")
+
+speedPrefs$angular_speed=as.numeric(speedPrefs$angular_speed)
+speedPrefs$linear_speed=as.numeric(speedPrefs$linear_speed)
+speedPrefs$radious_unity=as.numeric(speedPrefs$radious_unity)
+speedPrefs$radious_pixels=as.factor(speedPrefs$radious_pixels)
+
+#Rename ABC
+levels(speedPrefs$radious_pixels)=c(2.5,5,15)
+
+#Filter out !=numbers
+speedData=data%>%
+  filter(TASK_TYPE!="rotation_pref" & TASK_TYPE!="task_type")
+
+speedData$TASK_TYPE=as.factor(speedData$TASK_TYPE)
+speedData$animatio_type=as.factor(speedData$animatio_type)
+speedData$min_conf=as.factor(speedData$min_conf)
+speedData$angular_speed=as.numeric(speedData$angular_speed)
+speedData$linear_speed=as.numeric(speedData$linear_speed)
+speedData$radious_unity=as.numeric(speedData$radious_unity)
+speedData$radious_pixels=as.numeric(speedData$radious_pixels)
+
+
+
+levels(speedData$animatio_type)=c("Linear","Circular")
+levels(speedData$min_conf)=c("min","conf")
+
+# speedData=speedData%>%
+#   filter(USER!="MARINELA")%>%
+#   filter(USER!="ALEKSANDER" )%>%
+#   filter(USER!="ALBERT")%>%
+#   filter(USER!="VID")%>%
+#   filter(USER!="CLEMENT")
+
+#pixel in millimeters
+pixelConstant=0.088501742
+unityFraction=8 ## 
+
+speedData=speedData%>%
+  mutate(velocity = case_when(
+                    animatio_type=="Linear"~angular_speed*unityFraction*pixelConstant,
+                     animatio_type=="Circular"~angular_speed*(pi/180)*radious_pixels*pixelConstant
+                    ))
+
+speedData$velocity[speedData$velocity==0] <- 1
+#Rename ABC
+summary(speedData)
+```
+
+- Groupping data
+```{r}
+minUserData=speedData%>%
+  group_by(USER,TASK_TYPE, animatio_type, min_conf)%>%
+  summarise(MEAN=mean(velocity))%>%
+  filter(min_conf=="min")
+levels(minUserData$TASK_TYPE)=c("C15mm","C2.5mm", "Linear", "C5mm")
+
+minUserData=minUserData%>%
+  mutate(ORDER= case_when(
+                    TASK_TYPE=="C15mm"~3,
+                    TASK_TYPE=="C5mm"~2,
+                    TASK_TYPE=="C2.5mm"~1,
+                    TASK_TYPE=="Linear"~0,
+                    ))
+
+minUserData$TASK_TYPE=as.factor(minUserData$TASK_TYPE)
+minUserData=minUserData[order(minUserData$ORDER),]
+```
+```{r}
+confUserData=speedData%>%
+  group_by(USER,TASK_TYPE, animatio_type, min_conf)%>%
+  summarise(MEAN=mean(velocity))%>%
+  filter(min_conf!="min")
+levels(confUserData$TASK_TYPE)=c("C15mm","C2.5mm", "Linear", "C5mm")
+
+confUserData=confUserData%>%
+  mutate(ORDER= case_when(
+                    TASK_TYPE=="C15mm"~3,
+                    TASK_TYPE=="C5mm"~2,
+                    TASK_TYPE=="C2.5mm"~1,
+                    TASK_TYPE=="Linear"~0,
+                    ))
+
+confUserData$TASK_TYPE=as.factor(confUserData$TASK_TYPE)
+confUserData=confUserData[order(confUserData$ORDER),]
+```
+
+```{r}
+confUserData%>%
+group_by(TASK_TYPE)%>%
+  summarise(M=mean(MEAN),SD=sd(MEAN))
+```
+
+
+
+- Data visualization (Minimum)
+```{r}
+meanLines= minUserData%>%
+  group_by(ORDER)%>%
+  summarize(Mean=mean(MEAN),SD=sd(MEAN))
+ggplot(data= minUserData,aes(x=MEAN, fill=animatio_type))+
+  geom_vline(data=meanLines,mapping= aes(xintercept=Mean),
+                            color="red", linetype="dashed", size=0.5)+
+   geom_histogram(aes(y=..density..),binwidth = 1)+
+   geom_density(alpha=.2, fill="#FF6666")+
+  labs(title = "Minimum speed distribution")+
+  xlab("Speed mm/s")+
+  ylab("Density")+
+  facet_grid(ORDER~., labeller = labeller(ORDER = c(`0` = "Linear", `1` = " 2.5mm",`2` = "5mm",`3` = "15mm")))
+```
+```{r}
+ggplot(minUserData, aes(ORDER,MEAN, color=TASK_TYPE))+
+  geom_boxplot()+
+  stat_summary(
+              aes(group=TASK_TYPE, col=TASK_TYPE),
+              position=position_dodge(width=0.75),
+              color = "red") 
+```
+
+- FIT
+```{r}
+goft::gamma_test(minUserData[minUserData$TASK_TYPE=="C15mm",]$MEAN)
+goft::gamma_test(minUserData[minUserData$TASK_TYPE=="C5mm",]$MEAN)
+goft::gamma_test(minUserData[minUserData$TASK_TYPE=="C2.5mm" ,]$MEAN)
+goft::gamma_test(minUserData[minUserData$TASK_TYPE=="Linear" ,]$MEAN)
+```
+
+
+
+## GLMM Gamma
+- Builfing the model
+```{r}
+mMINFULL=glmer(MEAN~TASK_TYPE + (1| USER), data = minUserData, family = Gamma(link = "log"), nAGQ = 100, contrasts = list(TASK_TYPE="contr.sum"))
+summary(mMINFULL)
+```
+## Anova
+```{r}
+Anova(mMINFULL, type = 2)
+```
+# Comfortable reading velocity
+- Data visualization
+```{r}
+meanLines= confUserData%>%
+  group_by(ORDER)%>%
+  summarize(Mean=mean(MEAN),SD=sd(MEAN))
+ggplot(data= confUserData,aes(x=MEAN, fill=animatio_type))+
+  geom_vline(data=meanLines,mapping= aes(xintercept=Mean),
+                            color="red", linetype="dashed", size=0.5)+
+   geom_histogram(aes(y=..density..),binwidth = 1)+
+   geom_density(alpha=.2, fill="#FF6666")+
+  labs(title = "Comfortable speed distribution")+
+  xlab("Speed mm/s")+
+  ylab("Density")+
+  facet_grid(ORDER~., labeller = labeller(ORDER = c(`0` = "Linear", `1` = " 2.5mm",`2` = "5mm",`3` = "15mm")))
+```
+```{r}
+ggplot(confUserData, aes(ORDER,MEAN, color=TASK_TYPE))+
+  geom_boxplot()+
+  stat_summary(fun = mean,
+              aes(group=TASK_TYPE, col=TASK_TYPE),
+              position=position_dodge(width=0.75),
+              color = "red") +
+  stat_summary(
+    fun.min = function(x) mean(x) - sd(x),
+    fun.max = function(x) mean(x) + sd(x),
+    geom = "errorbar",
+    color = "red",
+    width = .3,
+    alpha=0.5,
+    aes(group=TASK_TYPE, col=TASK_TYPE) , position=position_dodge(width=0.75))
+```
+
+- FIT
+```{r}
+goft::gamma_test(confUserData[confUserData$TASK_TYPE=="C15mm",]$MEAN)
+goft::gamma_test(confUserData[confUserData$TASK_TYPE=="C5mm",]$MEAN)
+goft::gamma_test(confUserData[confUserData$TASK_TYPE=="C2.5mm" ,]$MEAN)
+goft::gamma_test(confUserData[confUserData$TASK_TYPE=="Linear" ,]$MEAN)
+```
+
+## GLMM Gamma
+- Building the model 
+```{r}
+mCONFFULL=glmer(MEAN~TASK_TYPE + (1| USER), data = confUserData, family = Gamma(link = "log"), nAGQ = 100, contrasts = list(TASK_TYPE="contr.sum"))
+summary(mCONFFULL)
+```
+## Anova
+```{r}
+Anova(mCONFFULL, type =3)
+```

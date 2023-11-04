@@ -1,0 +1,271 @@
+---
+title: "Study A (Images)"
+output: html_notebook
+---
+
+# Importing libs and data
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(readxl)
+library(gplots)
+library(ggplot2)
+library(dplyr)
+library(rstatix)
+library(reshape2)
+library(lme4)
+library(car)
+library(flexplot)
+library(multcomp)
+library(lsmeans)
+library(glmmTMB)
+library(ggprism)
+library(fitdistrplus)
+```
+## Formatting data 
+- Select data
+```{r}
+imageFile<- read_excel("./data/StudyA_Data.xlsx", sheet = "DATA")
+```
+```{r}
+USER=imageFile["USER"]
+Q1=imageFile["Q1"]
+Q2=imageFile["Q2"]
+MOVEMENT=imageFile["MOVEMENT"]
+
+
+data=data.frame(USER,Q1,Q2,MOVEMENT)
+data$USER=as.factor(data$USER)
+data$Q1=as.factor(data$Q1)
+data$Q2=as.factor(data$Q2)
+data$MOVEMENT=as.factor(data$MOVEMENT)
+
+summary(data)
+```
+
+### Grouping data
+- As this approach is subject based, we are gonna sum up the count of responses for a given mode in each question.
+
+```{r }
+details=data%>%
+  group_by(USER,Q1)%>%
+  summarise(Counts=n())
+
+prefs=data%>%
+  group_by(USER,Q2)%>%
+  summarise(Counts=n())
+```
+
+
+## 1. In which  movement mode participant identify more details?
+- Data overview
+```{r}
+summary(details)
+```
+
+ -  Inserting missing values (0)
+ 
+```{r}
+details_=dcast(details, USER~Q1, value.var="Counts",  fun.aggregate=sum) 
+```
+ 
+
+```{r} 
+ details_ = details_%>% 
+ gather(key = "Q1", value = "Counts", Circular,Linear, Same, Static) 
+``` 
+
+<!-- - Filtering out excess of zeros -->
+<!-- ```{r} -->
+<!-- details_filtered=details_[(details_$MOVEMENT=="LC"  & details_$Q1=="Circular" ) | (details_$MOVEMENT=="LC"  & details_$Q1=="Linear" ) | (details_$MOVEMENT=="LC"  & details_$Q1=="Same" ) | (details_$MOVEMENT=="SC"  & details_$Q1=="Circular" ) | (details_$MOVEMENT=="SC"  & details_$Q1=="Static" ) | (details_$MOVEMENT=="SC"  & details_$Q1=="Same" ) | (details_$MOVEMENT=="SL"  & details_$Q1=="Linear" ) | (details_$MOVEMENT=="SL"  & details_$Q1=="Static" ) | (details_$MOVEMENT=="SL"  & details_$Q1=="Same" ) ,]  -->
+<!--  details_filtered$Q1=as.factor(details_filtered$Q1) -->
+<!--  summary(details_filtered) -->
+<!-- ``` -->
+
+- Filtering out SAME responses
+
+```{r}
+details_NOSAME=details_%>%
+  filter(Q1!="Same")
+details_NOSAME$Q1=as.factor(details_NOSAME$Q1)
+summary(details_NOSAME)
+```
+- Quick view
+```{r fig1_1,fig.width=9, fig.height=4,fig.align='center'}
+ggplot(data=details_NOSAME, aes(x=Q1,y=Counts))+
+  geom_boxplot(outlier.colour="blue", outlier.shape=16,
+             outlier.size=2)+
+  stat_summary(color = "red")+
+  xlab("Movement mode")+
+  ylab("Count of votes")
+```
+
+
+### GLMM Binomial
+
+- We need to use binomial since  is more robust and has less assumptions.
+
+- Define constant -> total number of possible votes
+```{r}
+details_NOSAME$totalCounts=10
+```
+
+-Build the model
+```{r}
+mDetails=glmer(cbind(Counts, 10-Counts)~Q1 +(1|USER), data = details_NOSAME, contrasts=list(Q1='contr.sum'), family = binomial(link="logit"), nAGQ=100)
+summary(mDetails)
+```
+### Anova
+```{r}
+Anova(mDetails, type=2)
+```
+### PWC
+```{r}
+pwcDetails=summary(glht(mDetails,lsm(pairwise~Q1)),test=adjusted(type="bonferroni"))
+pwcDetails
+```
+- Manually define PWC
+```{r}
+pwcDetailsPlot=tibble::tribble(
+  ~group1,~group2,~p.signif,~y.position,
+  "Circular", "Static", "**",8.3,
+  "Linear", "Static", "***",9.2,
+)
+```
+
+
+## 2. What is the preferred movement mode?
+
+- Data overview
+```{r}
+prefs=data%>%
+  group_by(USER,Q2)%>%
+  summarise(Counts=n())
+summary(prefs)
+```
+- Inserting missing values (0)
+
+```{r}
+prefs_=dcast(prefs, USER~Q2, value.var="Counts",  fun.aggregate=sum)
+```
+
+```{r}
+prefs_ = prefs_%>%
+  gather(key = "Q2", value = "Counts", Circular, Linear, Same, Static)
+```
+
+- Filtering out SAME responses
+
+```{r}
+prefs_NOSAME=prefs_%>%
+  filter(Q2!="Same")
+prefs_NOSAME$Q2=as.factor(prefs_NOSAME$Q2)
+summary(prefs_NOSAME)
+```
+-Data visualization
+
+```{r fig5,fig.width=9, fig.height=4,fig.align='center'}
+ggplot(data=prefs_NOSAME, aes(x=Q2,y=Counts))+
+  geom_boxplot(outlier.colour="blue", outlier.shape=16,
+             outlier.size=3)+
+  stat_summary( color = "red") +
+  # stat_summary(
+  #   fun.min = function(x) mean(x) - sd(x), 
+  #   fun.max = function(x) mean(x) + sd(x), 
+  #   geom = "errorbar",
+  #   color = "red",
+  #   width = .3,
+  # )+
+  xlab("Movement mode")+
+  ylab("Count of votes")
+```
+
+
+### GLMM  Binomial
+
+- Define constant -> total number of possible votes
+```{r}
+prefs_NOSAME$totalCounts=10
+```
+- Build the model 
+```{r}
+mPrefs=glmer(cbind(Counts,10-Counts)~Q2 +(1|USER),contrasts=list(Q2='contr.sum'), data = prefs_NOSAME, family = binomial(link="logit"), nAGQ=100)
+summary(mPrefs)
+```
+### Anova
+```{r}
+Anova(mPrefs, type=2)
+```
+
+### PWC
+```{r}
+pwcPrefs=summary(glht(mPrefs,lsm(pairwise~Q2)),test=adjusted(type="bonferroni"))
+pwcPrefs
+```
+- Manually handle PWC
+```{r}
+pwcPrefsPlot=tibble::tribble(
+  ~group1,~group2,~p.signif,~y.position,
+  "Circular", "Linear", "***",7.6,
+  #"Circular", "Static", ".",8,
+  "Linear", "Static", "*",8.4,
+)
+```
+
+
+## Generate Plots
+
+```{r}
+##Plots IMAGE
+# Details 
+#  In which  movement mode participant identify more details?Aka details
+detailsPlot=details_NOSAME%>%
+  ggplot(aes(x=Q1,y=Counts,  fill=Q1))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge(),alpha=0.5,stroke = 0)+
+  stat_summary(color = "red", geom = "line", linetype = "dashed", aes(group = 1)) + 
+  stat_summary( color = "red", size = 0.3,aes(group = 1), size = 0.5)+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c("#4d5b95", "#79797a", "#f4b979"))+
+  labs(x="Movement",y="Cummulative votes")+
+  ylim(0,10)+
+  add_pvalue(inherit.aes=FALSE,pwcDetailsPlot,
+             bracket.size = 0.5,
+             tip.length = 0.01,
+             colour = "magenta",
+             label.size=2)
+
+detailsPlot
+
+# Which movement mode do you prefer? aka preferences
+prefsPlot=prefs_NOSAME%>%
+  ggplot(aes(x=Q2,y=Counts,  fill=Q2))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge(),alpha=0.5,stroke = 0)+
+  stat_summary(color = "red", geom = "line", linetype = "dashed", aes(group = 1)) + 
+  stat_summary( color = "red", size = 0.3,aes(group = 1), size = 0.5)+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c("#4d5b95", "#79797a", "#f4b979"))+
+  labs(x="Movement",y="Cummulative votes")+
+  ylim(0,10)+
+  add_pvalue(inherit.aes=FALSE,pwcPrefsPlot,
+            
+             bracket.size = 0.5,
+             tip.length = 0.01,
+             colour = "magenta",
+             label.size=2)
+
+prefsPlot
+
+## PREFS
+
+figure <- ggarrange(detailsPlot, prefsPlot,
+                    labels = c("(a)", "(b)"),
+                    ncol = 2, nrow = 1)
+figure
+
+```
+
+
+
+

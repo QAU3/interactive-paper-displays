@@ -1,0 +1,533 @@
+---
+title: "StudyB_2/2"
+output: html_notebook
+---
+
+
+#Importing libs
+```{r}
+library(dplyr)
+library(fitdistrplus)
+library(rstatix)
+library(readxl)
+library(lme4)
+library(multcomp)
+library(lsmeans)
+library(car)
+library(flexplot)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(ggprism)
+library(reshape2)
+library(ARTool)
+```
+# In which movement mode was it easier to read?
+## Preparing the data
+- Reading data
+```{r}
+readingPhra <- read_excel("./data/StudyB_Data.xlsx", sheet = "PHRA_Details")
+```
+- Formatting data
+```{r}
+USER=readingPhra["USER"]
+FS=readingPhra["FONT_SIZE"]
+Q1=readingPhra["Q1"]
+FT=readingPhra["FONT_TYPE"]
+ROTATION=readingPhra["ROTATION_C"]
+
+prefsData=data.frame(USER,FS,FT,ROTATION,Q1)
+
+prefsData$USER=as.factor(as.numeric(prefsData$USER)-12)
+
+
+prefsData$FONT_SIZE=as.factor(as.numeric(prefsData$FONT_SIZE)/4)
+prefsData$FONT_TYPE=as.factor(prefsData$FONT_TYPE)
+prefsData$ROTATION_C=as.factor(prefsData$ROTATION_C)
+prefsData$Q1=as.factor(prefsData$Q1)
+
+
+summary(prefsData)
+```
+- Summarizing data
+```{r}
+easier2read=prefsData%>%
+  group_by(USER,Q1, FONT_TYPE, FONT_SIZE)%>%
+  summarise(Counts=n())
+summary(easier2read)
+```
+
+- Inserting 0 values missing
+```{r}
+easier2read_complete=dcast(easier2read, USER+FONT_TYPE+ FONT_SIZE~Q1, value.var="Counts",  fun.aggregate=sum)
+```
+
+```{r}
+easier2read_complete = easier2read_complete%>%
+  gather(key = "Q1", value = "Counts", Circular,Linear, Same, Static)
+```
+- Filtering out SAME responses
+
+```{r}
+easier2read_NOSAME=easier2read_complete%>%
+  filter(Q1!="Same")
+easier2read_NOSAME$Q1=as.factor(easier2read_NOSAME$Q1)
+summary(easier2read_NOSAME)
+```
+- Data visualization
+
+```{r fig12_3,fig.width=9, fig.height=4,fig.align='center'}
+ggplot(data=easier2read_NOSAME, aes(x=FONT_SIZE,y=Counts, color=Q1))+
+  geom_boxplot(outlier.colour="blue", outlier.shape=16,
+             outlier.size=2)+
+ stat_summary(fun = mean,
+              aes(group=Q1, col=Q1),
+              position=position_dodge(width=0.75),
+              color = "red") +
+  stat_summary(
+    fun.min = function(x) mean(x) - sd(x),
+    fun.max = function(x) mean(x) + sd(x),
+    geom = "errorbar",
+    color = "red",
+    width = .3,
+    alpha=0.5,
+    aes(group=Q1, col=Q1) , position=position_dodge(width=0.75)
+  
+  )+
+  xlab("Movement mode")+
+  ylab("Votes")+
+  facet_grid(rows=vars(FONT_TYPE))
+ 
+```
+
+```{r fig13_3,fig.width=9, fig.height=4,fig.align='center'}
+ggplot(easier2read_NOSAME, aes(x=Counts, fill=FONT_TYPE))+
+  geom_histogram(binwidth=1)+
+  facet_grid(~FONT_SIZE~Q1+FONT_TYPE)
+```
+
+
+
+## GLMM Binomial 
+
+
+- Building model
+```{r}
+mEasier=glmer(cbind(Counts,4-Counts)~Q1*FONT_SIZE*FONT_TYPE +(1|USER), data = easier2read_NOSAME, family = binomial(link="logit"), nAGQ = 100, contrast=list(FONT_TYPE="contr.sum",FONT_SIZE="contr.sum",Q1="contr.sum" ))
+```
+
+## Anova
+
+```{r}
+Anova(mEasier, type=3)
+```
+
+## PWC
+
+
+- MOVEMENT MODE
+- Rebuilding the model 
+```{r}
+mMOV=glmer(cbind(Counts,4-Counts)~Q1+(1|USER), data = easier2read_NOSAME, family = binomial(link="logit"), nAGQ = 100, contrast=list(Q1="contr.sum" ))
+summary(mMOV)
+```
+- Comparing pairs
+```{r}
+summary(glht(mMOV,lsm(pairwise~Q1)),test=adjusted(type="bonferroni"))
+```
+
+- Manually handeling results for ploting
+```{r}
+pwcMOVPlot=tibble::tribble(
+  ~group1,~group2,~p.signif,~y.position,~FONT_SIZE,~C1,~C2,~xmin,~xmax,
+  "Circular", "Linear", "*", 4.5,2,0,0,1,2,
+  "Circular", "Static", "***", 5,2,0,0,1,3,
+  "Linear", "Static", "***", 5.5,2,0,0,2,3,
+)
+  
+```
+
+
+
+- MOVEMENT MODE : FONT SIZE
+
+```{r}
+mQS=glmer(cbind(Counts,4-Counts)~Q1*FONT_SIZE+(1|USER), data = easier2read_NOSAME, family = binomial(link="logit"), nAGQ = 100, contrast=list(Q1="contr.sum" ,FONT_SIZE="contr.sum" ))
+```
+
+- Programatically get the PWC values
+
+```{r}
+
+
+pwcQSIZEPlot=tidy(summary(glht(mQS,lsm(pairwise~Q1*FONT_SIZE)),test=adjusted(type="bonferroni"))
+)
+##Adding starts
+
+pwcQSIZEPlot$p.signif=symnum(pwcQSIZEPlot$adj.p.value, corr = FALSE, na = FALSE, cutpoints = c(0, 
+    0.001, 0.01, 0.05, 0.1, 1), symbols = c("***", "**", "*", ".", " "))
+pwcQSIZEPlot$row_num <- seq.int(nrow(pwcQSIZEPlot))
+
+##Adding groups
+pwcQSIZEPlot$group1=sapply(strsplit(pwcQSIZEPlot$contrast," "), '[[',1)
+pwcQSIZEPlot$group2=sapply(strsplit(pwcQSIZEPlot$contrast," "), '[[',4)
+pwcQSIZEPlot$C1=as.numeric(sapply(strsplit(pwcQSIZEPlot$contrast," "), '[[',2))
+pwcQSIZEPlot$C2=as.numeric(sapply(strsplit(pwcQSIZEPlot$contrast," "), '[[',5))
+
+##Adding   xmin and xman
+pwcQSIZEPlot= pwcQSIZEPlot %>% 
+  mutate(xmin = case_when(C1==8~1,C1==10~2,C1==12~3))%>%
+  mutate(xmin = case_when(group1=="Circular"~xmin-0.25,group1=="Linear"~xmin,group1=="Static"~xmin+0.25))
+
+pwcQSIZEPlot= pwcQSIZEPlot %>% 
+  mutate(xmax = case_when(C2==8~1,C2==10~2,C2==12~3))%>%
+  mutate(xmax= case_when(group2=="Circular"~xmax-0.25,group2=="Linear"~xmax,group2=="Static"~xmax+0.25))
+
+## Not significatt values fitered out
+pwcQSIZEPlot=pwcQSIZEPlot%>%
+  filter(adj.p.value<0.05)
+
+## Not same font size
+pwcQSIZEPlot=pwcQSIZEPlot%>%
+  filter(C1==C2 | group1 ==group2)
+
+
+## Ordering by movement
+pwcQSIZEPlot=pwcQSIZEPlot[order(pwcQSIZEPlot[,11],pwcQSIZEPlot[,11]),]
+
+pwcQSIZEPlot= pwcQSIZEPlot %>% 
+  mutate(color = case_when(C1==8 & C2==8~"8",C1==10& C2==10~"10",C1==12 & C2==12~"12", C1!=C2~"MX"))
+
+
+
+##  add y.posision
+#pwcQSIZEPlot$y.position <- seq.int(4.5, by=0.2, length.out = dim(pwcQSIZEPlot)[1])
+
+pwcQSIZEPlot=pwcQSIZEPlot%>%
+  group_by(color)%>%
+  mutate(y.position = case_when(
+    color=="MX"~seq.int(9.5, length.out=length(color),by=0.2),
+    color!="MX"~seq.int(8, length.out=length(color),by=0.2)))
+
+pwcQSIZEPlot
+```
+
+
+## Plots
+
+```{r}
+pwcMOVPlot=tibble::tribble(
+  ~group1,~group2,~p.signif,~y.position,~FONT_SIZE,~C1,~C2,~xmin,~xmax,
+  "Circular", "Linear", "*", 4.5,2,0,0,1,2,
+  "Circular", "Static", "***", 5,2,0,0,1,3,
+  "Linear", "Static", "***", 5.5,2,0,0,2,3,
+)
+
+movPLot=easier2read_NOSAME%>%
+  group_by(USER,Q1)%>%
+  summarise(Count=sum(Counts))%>%
+  ggplot(aes(x=Q1,y=Count,  fill=Q1))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge(),alpha=0.5,stroke = 0)+
+  stat_summary(color = "red", geom = "line",linetype="dashed", aes(group = 1)) + 
+  stat_summary( color = "red",size = 0.3, aes(group = 1), size = 0.5)+
+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c("#4d5b95", "#79797a", "#f4b979"))+
+  labs(x=NA,y="Cummulative votes")+
+  ylim(0,25)+
+  add_pvalue(inherit.aes = FALSE,pwcMOVPlot,
+             bracket.size = 0.6,
+             tip.length = 0.01,
+             colour = "magenta",
+             label.size = 2)
+
+movPLot
+
+
+
+movfsPlot=easier2read_NOSAME%>%
+  group_by(USER,Q1,FONT_SIZE)%>%
+  summarise(Count=sum(Counts))%>%
+  ggplot(aes(x=FONT_SIZE,y=Count,  fill=Q1))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge(),alpha=0.5,stroke = 0)+
+  stat_summary( aes(group=Q1),
+                position=position_dodge(width=0.75),color = "red", geom = "line", linetype="dashed") + 
+  stat_summary( color = "red", size = 0.3,aes(group=Q1),
+                position=position_dodge(width=0.75))+
+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c("#4d5b95", "#79797a", "#f4b979"))+
+  
+  labs(x="Movement",y="Cummulative votes")+
+  ylim(0,10)+
+  add_pvalue(inherit.aes=FALSE,pwcQSIZEPlot,
+             xmin = "xmin",
+             xmax="xmax",
+             bracket.size = 0.5,
+             tip.length = 0.01,
+             colour = "magenta",
+             label.size=2)
+
+movfsPlot
+
+figure1 <- ggarrange(movPLot,movfsPlot,
+                     ncol = 2, nrow = 1)
+figure1
+```
+
+# Minimum and Comforatble Font Size
+## Minimum size
+### Importing data
+```{r}
+##PLotting
+phraMinFile <- read_excel("./data/StudyB_Data.xlsx", sheet = "PHRA_FontSize")
+```
+
+- Raw data
+```{r}
+USER=phraMinFile["USER"]
+FT=phraMinFile["FONT_TYPE"]
+MIN_FS=phraMinFile["MIN_FS"]
+CONF_FS=phraMinFile["CONF_FS"]
+MOVEMENT=phraMinFile["MOVEMENT"]
+
+data= data.frame(USER,FT,MOVEMENT,MIN_FS, CONF_FS)
+data$USER <- as.factor(data$USER)
+data$FONT_TYPE <- as.factor(data$FONT_TYPE)
+data$MOVEMENT <- as.factor(data$MOVEMENT)
+data$MIN_FS <- as.numeric(data$MIN_FS)
+data$CONF_FS <- as.numeric(data$CONF_FS)
+data$MIN=as.numeric(data$MIN_FS/4)
+data$CONF=as.numeric(data$CONF_FS/4)
+
+summary(data)
+```
+
+- Formatting data per user
+
+```{r}
+uData=data%>%
+ group_by(USER,MOVEMENT,FONT_TYPE)%>%
+  summarise(MeanMin=mean(MIN), StdMin=sd(MIN),MeanConf=mean(CONF), StdConf=sd(CONF))
+summary(uData)
+```
+```{r}
+uData%>%
+  group_by(FONT_TYPE)
+```
+
+
+- Visualization 
+
+```{r}
+meanLines= uData%>%
+  group_by(MOVEMENT, FONT_TYPE)%>%
+  summarize(Mean=mean(MeanMin))
+
+ggplot(data= uData,aes(x=MeanMin))+
+  geom_vline(data=meanLines,mapping= aes(xintercept=Mean),
+                            color="red", linetype="dashed", size=0.5)+
+   geom_histogram(aes(y=..density..), colour="black", fill="white",binwidth = 0.5)+
+   geom_density(alpha=.2, fill="#FF6666")+
+  labs(title = "Minimum font size distribution")+
+  xlab("Font size")+
+  ylab("Density")+
+  facet_grid(~FONT_TYPE~MOVEMENT)
+```
+```{r}
+ggplot(uData, aes(FONT_TYPE,MeanMin, color=MOVEMENT))+
+  geom_boxplot()
+```
+
+
+- FIT
+```{r}
+goft::gamma_test(uData[uData$MOVEMENT=="circular" & uData$FONT_TYPE=="A",]$MeanMin)
+goft::gamma_test(uData[uData$MOVEMENT=="circular" & uData$FONT_TYPE=="T",]$MeanMin)
+goft::gamma_test(uData[uData$MOVEMENT=="linear" & uData$FONT_TYPE=="A",]$MeanMin)
+goft::gamma_test(uData[uData$MOVEMENT=="linear" & uData$FONT_TYPE=="T",]$MeanMin)
+goft::gamma_test(uData[uData$MOVEMENT=="static" & uData$FONT_TYPE=="A",]$MeanMin)
+goft::gamma_test(uData[uData$MOVEMENT=="static" & uData$FONT_TYPE=="T",]$MeanMin)
+```
+
+
+
+### GLMM Gamma
+
+- Buillding the model
+```{r}
+mMINFULL=glmer(MeanMin~MOVEMENT*FONT_TYPE + (1| USER), data = uData, family = Gamma(link = "log"), nAGQ = 2, contrasts = list(MOVEMENT="contr.sum",FONT_TYPE="contr.sum" ))
+summary(mMINFULL)
+```
+### Anova
+```{r}
+Anova(mMINFULL, type=3)
+#Add statrisics of almost significant ANova
+```
+
+
+## Comfortabl size (Optimmal)
+
+- Visualization 
+
+```{r}
+meanLines= uData%>%
+  group_by(MOVEMENT, FONT_TYPE)%>%
+  summarize(Mean=mean(MeanConf))
+
+ggplot(data= uData,aes(x=MeanConf))+
+  geom_vline(data=meanLines,mapping= aes(xintercept=Mean),
+                            color="red", linetype="dashed", size=0.5)+
+   geom_histogram(aes(y=..density..), colour="black", fill="white",binwidth = 0.5)+
+   geom_density(alpha=.2, fill="#FF6666")+
+  labs(title = "Minimum font size distribution")+
+  xlab("Font size")+
+  ylab("Density")+
+  facet_grid(~FONT_TYPE~MOVEMENT)
+```
+```{r}
+ggplot(uData, aes(FONT_TYPE,MeanConf, color=MOVEMENT))+
+  geom_boxplot()
+```
+
+- FTI
+
+```{r}
+goft::gamma_test(uData[uData$MOVEMENT=="circular" & uData$FONT_TYPE=="A",]$MeanConf)
+goft::gamma_test(uData[uData$MOVEMENT=="circular" & uData$FONT_TYPE=="T",]$MeanConf)
+goft::gamma_test(uData[uData$MOVEMENT=="linear" & uData$FONT_TYPE=="A",]$MeanConf)
+goft::gamma_test(uData[uData$MOVEMENT=="linear" & uData$FONT_TYPE=="T",]$MeanConf)
+goft::gamma_test(uData[uData$MOVEMENT=="static" & uData$FONT_TYPE=="A",]$MeanConf)
+goft::gamma_test(uData[uData$MOVEMENT=="static" & uData$FONT_TYPE=="T",]$MeanConf)
+```
+
+
+
+### GLMM Gamma
+- Building the model
+```{r}
+mCONFFULL=glmer(MeanConf~MOVEMENT*FONT_TYPE + (1| USER), data = uData, family = Gamma(link = "log"), nAGQ = 1, contrasts = list(MOVEMENT="contr.sum",FONT_TYPE="contr.sum" ))
+summary(mMINFULL)
+```
+### Anova
+```{r}
+Anova(mCONFFULL, type=3)
+```
+
+### PWC
+- Rebuild the model
+```{r}
+mCONFMOV=glmer(MeanConf~MOVEMENT + (1| USER), data = uData, family = Gamma(link = "log"), nAGQ = 1, contrast =list(MOVEMENT="contr.sum"))
+summary(mCONFMOV)
+```
+- Get PWC
+```{r}
+summary(glht(mCONFMOV,lsm(pairwise~MOVEMENT)),test=adjusted(type="bonferroni"))
+```
+- Manually handle output
+```{r}
+pwcCONFMOV=tibble::tribble(
+  ~group1,~group2,~p.signif,~y.position,~FONT_SIZE,~C1,~C2,~xmin,~xmax,
+  "circular", "linear", "*", 13,2,0,0,1,2,
+  "circular", "static", "***", 13.8,2,0,0,1,3,
+  "linear", "static", "***", 14,2,0,0,2,3,
+)
+  
+```
+
+## Plots
+```{r}
+minAllPlot=uData%>%
+  group_by(USER,MOVEMENT, FONT_TYPE)%>%
+  summarise(MEAN=mean(MeanMin))%>%
+  ggplot(aes(MOVEMENT:FONT_TYPE,MEAN,fill=MOVEMENT))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge(),alpha=0.5,stroke = 0)+
+  stat_summary(color = "red", geom = "line", linetype = "dashed", aes(group = 1)) + 
+  stat_summary( color = "red", size = 0.3,aes(group = 1),)+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c("#4d5b95", "#79797a", "#f4b979"))+
+  labs(x="Movement",y="Font size")+
+  ylim(0,14)
+
+minAllPlot
+
+
+uData%>%
+  group_by(MOVEMENT)%>%
+  summarise(MEAN=mean(MeanMin), STD=sd(MeanMin))
+
+
+uData%>%
+  group_by(MOVEMENT)%>%
+  summarise(M=mean(MeanConf), S=sd(MeanConf))
+
+
+
+minPlot=uData%>%
+  group_by(USER,MOVEMENT)%>%
+  summarise(MEAN=mean(MeanMin))%>%
+  ggplot(aes(MOVEMENT,MEAN,fill=MOVEMENT))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge(),alpha=0.5,stroke = 0)+
+  stat_summary(color = "red", geom = "line", linetype = "dashed", aes(group = 1)) + 
+  stat_summary( color = "red", size = 0.3,aes(group = 1),)+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c("#4d5b95", "#79797a", "#f4b979"))+
+  labs(x="Movement",y="Font size")+
+  #add_pvalue(inherit.aes = FALSE,pwcMINMOV,
+    #         bracket.size = 0.6,
+     #        tip.length = 0.01,
+     #        colour = "magenta",
+     #        label.size = 2)+
+  ylim(0,14)
+
+minPlot
+
+
+
+confAllPlot=uData%>%
+  group_by(USER,MOVEMENT, FONT_TYPE)%>%
+  summarise(MEAN=mean(MeanConf))%>%
+  ggplot(aes(MOVEMENT:FONT_TYPE,MEAN,fill=MOVEMENT))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge(),alpha=0.5,stroke = 0)+
+  stat_summary(color = "red", geom = "line", linetype = "dashed", aes(group = 1)) + 
+  stat_summary( color = "red", size = 0.3,aes(group = 1),)+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c("#4d5b95", "#79797a", "#f4b979"))+
+  labs(x="Movement",y="Font size")+
+  ylim(0,14)
+
+confAllPlot
+
+
+confPlot=uData%>%
+  group_by(USER,MOVEMENT)%>%
+  summarise(MEAN=mean(MeanConf))%>%
+  ggplot(aes(MOVEMENT,MEAN,fill=MOVEMENT))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge(),alpha=0.5,stroke = 0)+
+  stat_summary(color = "red", geom = "line", linetype = "dashed", aes(group = 1)) + 
+  stat_summary( color = "red", size = 0.3,aes(group = 1), size = 0.5)+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c("#4d5b95", "#79797a", "#f4b979"))+
+  labs(x="Movement",y="Font size")+
+  ylim(0,14)+
+  add_pvalue(inherit.aes = FALSE,pwcCONFMOV,
+             bracket.size = 0.6,
+             tip.length = 0.01,
+             colour = "magenta",
+             label.size = 2)
+
+confPlot
+
+
+figure1 <- ggarrange(minAllPlot, confAllPlot,minPlot,confPlot,
+                     ncol = 4, nrow = 1)
+figure1
+
+```
+

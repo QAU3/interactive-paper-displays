@@ -1,0 +1,319 @@
+---
+title: "StudyD"
+output: html_notebook
+---
+# Import libs
+```{r}
+library(ggpubr)
+library(tidyverse)
+library(ggplot2)
+library(readxl)
+library(rstatix)
+library(emmeans)
+library(dplyr)
+library(tibble)
+library(fitdistrplus)
+library(lme4)
+library(multcomp)
+library(lsmeans)
+library(car)
+```
+
+# Reading on Pinhole Paper
+
+## Importing data
+```{r}
+readingReal=read_excel("./data/StudyD_Data.xlsx", sheet = "Reading")
+```
+
+- Data overview
+```{r}
+user=readingReal["user"]
+min=readingReal["min"]
+conf=readingReal["conf"]
+ft=readingReal["font_type"]
+
+readingData=data.frame(user,min,conf,ft)
+
+readingData$user=as.factor(readingData$user)
+readingData$min=as.factor(readingData$min)
+readingData$conf=as.factor(readingData$conf)
+readingData$font_type=as.factor(readingData$font_type)
+readingData$min=factor(readingData$min, levels=c(6,8,10,12,14))
+readingData$conf=factor(readingData$conf, levels=c(6,8,10,12,14))
+
+readingData=readingData%>%
+  group_by(user,min, font_type)%>%
+  mutate(minCounts=n())
+
+readingData=readingData%>%
+  group_by(user,conf, font_type)%>%
+  mutate(confCounts=n())
+
+summary(readingData)
+```
+
+- Groupping data 
+
+```{r fig1,fig.width=9, fig.height=3,fig.align='center'}
+##OVERALL
+
+
+readTable=readingData%>%
+  group_by(font_type, min)%>%
+  summarise(Counts=n())
+
+t=tibble::tribble(~font_type, ~min, ~Counts,
+                          "arial",6,20,
+                          "arial",8,4,
+                          "arial",10,0,
+                          "arial",11,0,
+                          "arial",12,0,
+                          "times",6,15,
+                          "times",8,9,
+                          "times",10,0,
+                          "times",11,0,
+                          "times",12,0,)
+
+p=ggplot(t,aes(x=min, y=Counts))+
+  geom_bar(stat="identity")+
+  labs(title = "Minimum font size for reading (overall)")+
+  xlab("Font size")+
+  ylab("Counts")+
+  scale_fill_discrete(name = "Font type")+
+  facet_grid(~font_type)
+p
+```
+
+
+
+# Writing on Pinhole Paper
+
+## Importing data
+
+```{r}
+writtingReal=read_excel("./data/StudyD_Data.xlsx", sheet = "Writting")
+```
+
+- Formatting and grouping
+```{r}
+USER=writtingReal["USER"]
+Q1=writtingReal["Q1"]
+Q2=writtingReal["Q2"]
+Q3=writtingReal["Q3"]
+PEN=writtingReal["PEN"]
+ACTIVITY=writtingReal["ACTIVITY"]
+
+writtingData=data.frame(USER,Q1,Q2,Q3,PEN,ACTIVITY)
+
+
+writtingData$USER=as.factor(writtingData$USER)
+writtingData$Q1=as.factor(writtingData$Q1)
+writtingData$Q2=as.factor(writtingData$Q2)
+writtingData$Q3=as.factor(writtingData$Q3)
+writtingData$PEN=as.factor(writtingData$PEN)
+writtingData$ACTIVITY=as.factor(writtingData$ACTIVITY)
+
+
+writtingData2=writtingData
+summary(writtingData)
+```
+- Data visualization
+- Q1: Was it hard to sign your name on perforated paper?
+
+```{r}
+ggplot(writtingData, aes(ACTIVITY))+
+  geom_bar()+
+  facet_grid(~PEN~Q1)
+```
+- Q2: Did you feel uncomfortable - perforated paper?
+
+
+```{r}
+ggplot(writtingData, aes(ACTIVITY))+
+  geom_bar()+
+  facet_grid(~PEN~Q2)
+```
+- Q3: Are you satisfied how it looks?
+```{r}
+ggplot(writtingData, aes(ACTIVITY))+
+  geom_bar()+
+  facet_grid(~PEN~Q3)
+```
+
+## Filtering out IDK (2) responses
+```{r}
+writtingData=writtingData%>%
+  filter(Q1!=2)%>%
+  filter(Q2!=2)%>%
+  filter(Q3!=2)
+
+summary(writtingData)
+
+```
+
+
+
+
+## GLMM Binomial
+- Q1
+```{r}
+mQ1= glmer(Q1~PEN*ACTIVITY +(1|USER),contrasts=list(PEN='contr.sum',ACTIVITY ='contr.sum'),data = writtingData, family = binomial(link="logit"), nAGQ = 1)
+summary(mQ1)
+```
+- Q2
+```{r}
+mQ2= glmer(Q2~PEN*ACTIVITY +(1|USER),contrasts=list(PEN='contr.sum',ACTIVITY ='contr.sum'), data = writtingData, family = binomial(link="logit"), nAGQ = 1)
+summary(mQ2)
+```
+- Q3 
+```{r}
+mQ3= glmer(Q3~PEN*ACTIVITY +(1|USER),contrasts=list(PEN='contr.sum',ACTIVITY ='contr.sum'), data = writtingData, family = binomial(link="logit"), nAGQ = 1)
+summary(mQ3)
+```
+
+
+## Anova
+- Q1
+```{r}
+Anova(mQ1, type=3)
+```
+
+
+```{r}
+Anova(mQ2, type=3)
+```
+
+
+
+```{r}
+Anova(mQ3, type=3)
+```
+
+
+
+
+## Plots
+
+- Readin
+```{r}
+
+## Reading plots
+min=tibble::tribble(~font_type, ~min, ~Counts,
+                  "arial",6,20,
+                  "arial",8,4,
+                  "arial",10,0,
+                  "arial",12,0,
+                  "arial",14,0,
+                  "times",6,15,
+                  "times",8,9,
+                  "times",10,0,
+                  "times",12,0,
+                  "times",14,0,)
+
+minFont=ggplot(min,aes(x=as.factor(min), y=Counts/0.24, fill=font_type))+
+  geom_bar(stat="identity", position=position_dodge2())+
+  xlab("Font size")+
+  ylab("Ratio [%]")+
+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c( "#79797a","#cccccc"))+
+  ylim(0,100)
+
+minFont
+
+conf=tibble::tribble(~font_type, ~conf, ~Counts,
+                    "arial",6,0,
+                    "arial",8,3,
+                    "arial",10,14,
+                    "arial",12,7,
+                    "arial",14,0,
+                    "times",6,0,
+                    "times",8,0,
+                    "times",10,12,
+                    "times",12,11,
+                    "times",14,1,)
+
+confFont=ggplot(conf,aes(x=as.factor(conf), y=Counts/0.24, fill=font_type))+
+  geom_bar(stat="identity", position=position_dodge2())+
+  xlab("Font size")+
+  ylab("Ratio [%]")+
+  theme_bw()+
+  theme(legend.position = "none")+ 
+  scale_fill_manual(values=c( "#79797a","#cccccc"))+  ylim(0,100)
+
+confFont
+
+figure1 <- ggarrange(minFont,confFont,
+                     ncol = 2, nrow = 1)
+figure1
+ggplot2::ggsave("./RawPlots/segments/realPaper1.svg", figure1, width = 3, height=2, units = "in")
+```
+
+
+- Writting 
+```{r}
+### Writting plots
+
+
+Q1=writtingData%>%
+  group_by(Q1,PEN,ACTIVITY)%>%
+  summarise(Count=n(), Percent=Count/24)%>%
+  ungroup()%>%
+  ggplot(aes(PEN:ACTIVITY, Percent, fill=Q1))+
+  geom_bar(stat = "identity", position = "fill")+
+  geom_text(
+    aes(y = Percent, label = scales::percent(Percent,  accuracy = 1,)),
+    position = position_stack(vjust = 0.5),
+    show.legend = FALSE,
+    size=3)+
+  scale_fill_manual(values=c("#be1e2d","#13af4b"))+
+  coord_flip()+
+  theme_bw()+
+  theme(legend.position = "none")
+Q1
+
+Q2=writtingData%>%
+  group_by(Q2,PEN,ACTIVITY)%>%
+  summarise(Count=n(), Percent=Count/24)%>%
+  ungroup()%>%
+  ggplot(aes(PEN:ACTIVITY, Percent, fill=Q2))+
+  geom_bar(stat = "identity", position = "fill")+
+  geom_text(
+    aes(y = Percent, label = scales::percent(Percent,  accuracy = 1,)),
+    position = position_stack(vjust = 0.5),
+    show.legend = FALSE,
+    size=3)+
+  scale_fill_manual(values=c("#be1e2d","#13af4b", "#cccccc"))+
+  coord_flip()+
+  theme_bw()+
+  theme(legend.position = "none")
+Q2
+
+Q3=writtingData%>%
+  group_by(Q3,PEN,ACTIVITY)%>%
+  summarise(Count=n(), Percent=Count/24)%>%
+  ungroup()%>%
+  ggplot(aes(PEN:ACTIVITY, Percent, fill=Q3))+
+  geom_bar(stat = "identity", position = "fill")+
+  geom_text(
+    aes(y = Percent, label = scales::percent(Percent,  accuracy = 1,)),
+    position = position_stack(vjust = 0.5),
+    show.legend = FALSE,
+    size=3)+
+  scale_fill_manual(values=c("#be1e2d","#13af4b", "#cccccc"))+
+  coord_flip()+
+  theme_bw()+
+  theme(legend.position = "none")
+Q3
+
+
+figure2 <- ggarrange(Q1,Q2,Q3,
+                     ncol = 3, nrow = 1)
+figure2
+
+ggplot2::ggsave("./RawPlots/segments/realPaper2.svg", figure2, width = 7.27, height=2, units = "in")
+
+
+```
+
